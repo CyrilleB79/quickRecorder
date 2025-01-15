@@ -299,5 +299,20 @@ manifest = env.NVDAManifest(os.path.join("addon", "manifest.ini"), os.path.join(
 env.Depends(manifest, "buildVars.py")
 
 env.Depends(addon, manifest)
+
+def installDependencies(target, source, env):
+    libsDir = os.path.join(env.Dir("#").abspath, "addon", "globalPlugins", "quickRecorder", "libs", "py311")
+    requirementsFile = os.path.join(env.Dir("#").abspath, "requirements.txt")
+    print(f"Installing dependencies from {requirementsFile} into {libsDir}...")
+    pipCmd = f"pip install --target {libsDir} -r {requirementsFile} --platform win32 --python-version 3.11 --implementation cp --only-binary=:all:"
+    os.system(pipCmd)
+
+thirdPartyDeps = env.Command(
+    target="addon/libs",
+    source="requirements.txt",
+    action=installDependencies,
+)
+env.Depends(addon, thirdPartyDeps)
+
 env.Default(addon)
 env.Clean(addon, [".sconsign.dblite", "addon/doc/" + buildVars.baseLanguage + "/"])
