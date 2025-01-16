@@ -300,8 +300,23 @@ env.Depends(manifest, "buildVars.py")
 
 env.Depends(addon, manifest)
 
+libsDir = os.path.join(env.Dir("#").abspath, "addon", "globalPlugins", "quickRecorder", "libs", "py311")
+expectedLibFiles = [os.path.join(libsDir, p) for p in [
+	os.path.join('PyAudio-0.2.14.dist-info', f) for f in [
+		"INSTALLER",
+		"LICENSE.txt",
+		"METADATA",
+		"RECORD",
+		"REQUESTED",
+		"top_level.txt",
+		"WHEEL",
+	],
+	os.path.join("pyaudio", f) for f in [
+		"__init__.py",
+		"_portaudio.cp311-win32.pyd",
+	]),
+]]
 def installDependencies(target, source, env):
-    libsDir = os.path.join(env.Dir("#").abspath, "addon", "globalPlugins", "quickRecorder", "libs", "py311")
     requirementsFile = os.path.join(env.Dir("#").abspath, "requirements.txt")
     print(f"Installing dependencies from {requirementsFile} into {libsDir}...")
     pipCmd = f"pip install --target {libsDir} -r {requirementsFile} --platform win32 --python-version 3.11 --implementation cp --only-binary=:all:"
@@ -316,3 +331,9 @@ env.Depends(addon, thirdPartyDeps)
 
 env.Default(addon)
 env.Clean(addon, [".sconsign.dblite", "addon/doc/" + buildVars.baseLanguage + "/"])
+
+libsFiles = env.Glob("addon/globalPlugins/quickRecorder/libs/*")
+for file in libsFiles:
+    env.Depends(addon, file)
+    env.Clean(addon, file)
+
