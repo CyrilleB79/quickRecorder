@@ -307,6 +307,13 @@ expectedLibFiles = [os.path.join(env.Dir("#").abspath, "addon", "globalPlugins",
 	"_portaudio.cp311-win32.pyd",
 ]]
 
+def cleanLibsDirAction(target, source, env):
+	import shutil
+	try:
+		shutil.rmtree(libsDir)
+	except FileNotFoundError:
+		pass
+
 def installLibsAction(target, source, env):
 	pipCmd = f"pip install --upgrade --target {libsDir} -r {requirementsFile} --platform win32 --python-version 3.11 --implementation cp --only-binary=:all:"
 	env.Execute(pipCmd)
@@ -314,7 +321,7 @@ def installLibsAction(target, source, env):
 libDirsTargets = env.Command(
 	target=expectedLibFiles,
 	source=requirementsFile,
-	action=installLibsAction,
+	action=[cleanLibsDirAction, installLibsAction],
 )
 env.Depends(addon, libDirsTargets)
 
