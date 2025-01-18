@@ -142,135 +142,171 @@ class AudioRecord:
 
 import time
 import ctypes
-zzzz
 
 # Load LAME encoder DLL
-lameDllPath = os.path.join(os.path.dirname(__file__), "libs", "lame_enc.dll")
+lameDllPath = os.path.join(os.path.dirname(__file__), "libs", "libmp3lame.dll")
 lame = ctypes.CDLL(lameDllPath)
 
 # LAME function prototypes
-lame.encodeInit = lame.lame_init
-lame.encodeInit.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
-lame.encodeInit.restype = ctypes.c_void_p
+lame.lame_init.argtypes = []
+lame.lame_init.restype = ctypes.c_void_p
 
-lame.encodeBufferInterleaved = lame.lame_encode_buffer_interleaved
-lame.encodeBufferInterleaved.argtypes = [
-	ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_ubyte), ctypes.POINTER(ctypes.c_ubyte)
+lame.lame_set_in_samplerate.argtypes = [ctypes.c_void_p, ctypes.c_int]
+lame.lame_set_in_samplerate.restype = ctypes.c_int
+
+lame.lame_set_num_channels.argtypes = [ctypes.c_void_p, ctypes.c_int]
+lame.lame_set_num_channels.restype = ctypes.c_int
+
+lame.lame_set_brate.argtypes = [ctypes.c_void_p, ctypes.c_int]
+lame.lame_set_brate.restype = ctypes.c_int
+
+lame.lame_init_params.argtypes = [ctypes.c_void_p]
+lame.lame_init_params.restype = ctypes.c_int
+
+lame.lame_encode_buffer.argtypes = [
+	ctypes.c_void_p,					 # lame_global_flags* (context pointer)
+	ctypes.POINTER(ctypes.c_short),	  # Left channel PCM input buffer
+	ctypes.POINTER(ctypes.c_short),	  # Right channel PCM input buffer (or None for mono)
+	ctypes.c_int,						# Number of samples per channel
+	ctypes.POINTER(ctypes.c_ubyte),	  # MP3 output buffer
+	ctypes.c_int						 # MP3 buffer size
 ]
-lame.encodeBufferInterleaved.restype = ctypes.c_int
+lame.lame_encode_buffer.restype = ctypes.c_int
 
-# Initialize LAME encoder (Mono, 44100Hz, 128 kbps bitrate)
+
+lame.lame_close.argtypes = [ctypes.c_void_p]
+lame.lame_close.restype = ctypes.c_int
+
+
 def initLame(channels, sampleRate, bitrate=128):
-	return lame.encodeInit(channels, sampleRate, bitrate, 0)
+	"""Initialize LAME encoder with standard API."""
+	lameContext = lame.lame_init()
+	if not lameContext:
+		raise RuntimeError("Failed to initialize LAME encoder.")
 
-# Encoding function
-def encodeAudioToMp3(inputData):
-	lameContext = initLame(1, 44100, 128)  # Mono, 44100Hz, 128 kbps
+	# Set parameters
+	if lame.lame_set_in_samplerate(lameContext, sampleRate) != 0:
+		raise RuntimeError("Failed to set input sample rate.")
+	if lame.lame_set_num_channels(lameContext, channels) != 0:
+		raise RuntimeError("Failed to set number of channels.")
+	if lame.lame_set_brate(lameContext, bitrate) != 0:
+		raise RuntimeError("Failed to set bitrate.")
 
-	# Allocate space for the MP3 data
-	outputData = ctypes.create_string_buffer(len(inputData) * 2)
+	# Finalize parameters
+	if lame.lame_init_params(lameContext) != 0:
+		raise RuntimeError("Failed to initialize encoder parameters.")
+
+	return lameContext
+
+lameContext = None
+def encodeAudioToMp3(inputData, sampleRate=44100, channels=1, bitrate=128, initial=False):
+	"""Encode raw PCM audio data to MP3."""
+	global lameContext
+	log.info(f'zzz Encode audio to mp3')
+	if initial:
+		lameContext = initLame(channels, sampleRate, bitrate)
+	import math
+	d = [int(32000*math.sin(2*math.pi*220/44100*i)) for i in range(1,int(44100*4.8))]
+	d = b''.join(s.to_bytes(2, byteorder="little", signed=True) for s in d)
+	inputData = bytearray(d)
+	# Check if input data length matches the expected sample width
+	if len(inputData) % 2 != 0:
+		raise ValueError("Input data length must be a multiple of 2 for 16-bit audio.")
+
+	# Prepare input and output buffers
+	numSamples = len(inputData) // 2  # 2 bytes per sample for 16-bit audio
+	log.info(f'zzz {numSamples=}')
+	inputBuffer = (ctypes.c_short * numSamples).from_buffer(bytearray(inputData))
+	mp3BufferSize = int(1.25 * len(inputData) + 7200)  # Recommended buffer size
+	log.info(f'zzz {mp3BufferSize=}')
+	mp3Buffer = (ctypes.c_ubyte * mp3BufferSize)()
 
 	# Encode audio
-	bytesWritten = lame.encodeBufferInterleaved(
-		lameContext, len(inputData), inputData, outputData
+	bytesWritten = lame.lame_encode_buffer(
+		lameContext,
+		inputBuffer,   # Mono PCM data
+		None,		  # No right channel
+		numSamples,	# Total samples in the buffer
+		mp3Buffer,
+		mp3BufferSize,
 	)
+	log.info(f"{bytesWritten=}")
+	del inputBuffer
 
-	# Return the MP3 data
-	return outputData.raw[:bytesWritten]
+	# Check if bytesWritten exceeds the allocated buffer size
+	if bytesWritten > mp3BufferSize:
+		raise RuntimeError(
+			f"LAME encoder wrote {bytesWritten} bytes, which exceeds the buffer size of {mp3BufferSize}."
+		)
+	elif bytesWritten < 0:
+		lame.lame_close(lameContext)
+		lameContext = None
+		
+		raise RuntimeError(f"LAME encoding error: {bytesWritten}")
+
+	# Convert to bytes and clean up
+	mp3Data = bytes(mp3Buffer[:bytesWritten])
+	del mp3Buffer
+	return mp3Data
+
 
 class AudioRecord:
 	def __init__(self, filePath):
 		self.filePath = filePath
 		self.recordsPath = os.path.dirname(self.filePath)
 		self.isRecording = False
-		self.recordingComplete = False
 		self.audio = pyaudio.PyAudio()
 		self.stream = None
-		self.frames = []
-		self.recordingThread = None
-		self.audioBuffer = bytearray()  # To store raw audio data for encoding
-		self.lock = threading.Lock()  # To ensure thread safety
-		self.interval = 10  # Time interval for writing to disk in seconds
+		self.audioBuffer = bytearray()
+		self.lock = threading.Lock()
+		self.interval = 10  # Save interval in seconds
+		self.initial = None
 
 	def _recordAudio(self):
-		"""Private method to record audio in a separate thread."""
-		self.frames = []
-		self.stream = self.audio.open(format=pyaudio.paInt16,
-									  channels=1,
-									  rate=44100,
-									  input=True,
-									  frames_per_buffer=1024)
-
+		global lameContext
+		self.stream = self.audio.open(
+			format=pyaudio.paInt16,
+			channels=1,
+			rate=44100,
+			input=True,
+			frames_per_buffer=1024,
+		)
+		startTime = time.time()
+		self.initial = True
 		while self.isRecording:
 			data = self.stream.read(1024)
 			with self.lock:
-				self.audioBuffer.extend(data)  # Add audio data to buffer
+				self.audioBuffer.extend(data)
+			if time.time() - startTime >= self.interval:
+				with self.lock:
+					self.saveRecording()
+				startTime = time.time()
+		lame.lame_close(lameContext)
+		lameContext = None
 
 	def startRecording(self):
-		"""Start recording audio asynchronously in a separate thread."""
 		if self.isRecording:
 			raise RuntimeError("Already recording.")
-
 		self.isRecording = True
-		log.debug("Recording started.")
-		
-		# Create and start a new thread for recording
-		self.recordingThread = threading.Thread(target=self._recordAudio)
-		self.recordingThread.start()
+		threading.Thread(target=self._recordAudio).start()
 
 	def stopRecording(self):
-		"""Stop recording audio and save to MP3.
-		Returns True if the audio has been saved and False otherwise.
-		"""
-
-		if not self.isRecording:
-			raise RuntimeError("Not currently recording.")
-
 		self.isRecording = False
-		if self.recordingThread:
-			self.recordingThread.join()
-		self.stream.stop_stream()
-		self.stream.close()
-		self.recordingComplete = True
-		log.debug("Recording stopped.")
-		return self.saveRecording()
+		if self.stream:
+			self.stream.stop_stream()
+			self.stream.close()
+			self.saveRecording()
+			return True
+		return False
 
 	def saveRecording(self):
-		"""Save the recorded audio to an MP3 file, written at regular intervals."""
 		if not self.audioBuffer:
-			return False
-
-		if not os.path.isdir(self.recordsPath):
-			os.makedirs(self.recordsPath)
-
-		# Periodically save the audio buffer to MP3
-		with open(self.filePath, 'wb') as mp3File:
-			startTime = time.time()
-			while self.audioBuffer:
-				# Every interval seconds, encode and write to MP3
-				if time.time() - startTime >= self.interval:
-					mp3Data = encodeAudioToMp3(self.audioBuffer)
-					mp3File.write(mp3Data)
-					self.audioBuffer.clear()  # Clear the buffer after writing
-					startTime = time.time()  # Reset the timer
-
-				time.sleep(0.1)  # Simulate periodic recording, adjust as needed
-
-		log.debug(f"Audio saved as {self.filePath}")
-		return True
-
-	def play(self):
-		"""Play the recorded MP3 audio."""
-		if not os.path.exists(self.filePath):
-			raise FileNotFoundError(f"Audio file does not exist {self.filePath}")
-
-		log.debug("Playing audio...")
-		with open(self.filePath, 'rb') as mp3File:
-			# You could use any MP3 playback library here (e.g., pydub, playsound, etc.)
-			# For simplicity, we'll assume you're handling the playback with an external player
-			pass
-
-		log.debug("Audio playback finished.")
+			return
+		mp3Data = encodeAudioToMp3(self.audioBuffer, initial=self.initial)
+		self.initial = False
+		self.audioBuffer.clear()
+		with open(self.filePath, "ab") as mp3File:
+			mp3File.write(mp3Data)
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
@@ -315,7 +351,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
 	def generateRecordFilePath(self):
 		timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-		fileName = f"{timestamp}_audio.wav"
+		fileName = f"{timestamp}_audio.mp3"
 		filePath = os.path.join(self.recordsPath, fileName)
 		counter = 1
 		while os.path.exists(filePath):
@@ -353,4 +389,12 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		playbackThread.start()
 
 	def terminate(self):
+		if self.record and self.record.isRecording:
+			try:
+				saved = self.record.stopRecording()
+			except Exception:
+				log.exception("Error while saving current recording")
+			else:
+				if not saved:
+					log.error("Error whil saving recording")
 		super().terminate()
