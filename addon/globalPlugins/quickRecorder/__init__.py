@@ -205,10 +205,13 @@ def encodeAudioToMp3(inputData, sampleRate=44100, channels=1, bitrate=128, initi
 	log.info(f'zzz Encode audio to mp3')
 	if initial:
 		lameContext = initLame(channels, sampleRate, bitrate)
-	import math
-	d = [int(32000*math.sin(2*math.pi*220/44100*i)) for i in range(1,int(44100*4.8))]
-	d = b''.join(s.to_bytes(2, byteorder="little", signed=True) for s in d)
-	inputData = bytearray(d)
+
+	# Test:
+	# import math
+	# d = [int(32000*math.sin(2*math.pi*220/44100*i)) for i in range(1,int(44100*4.8))]
+	# d = b''.join(s.to_bytes(2, byteorder="little", signed=True) for s in d)
+	# inputData = bytearray(d)
+
 	# Check if input data length matches the expected sample width
 	if len(inputData) % 2 != 0:
 		raise ValueError("Input data length must be a multiple of 2 for 16-bit audio.")
@@ -255,6 +258,7 @@ class AudioRecord:
 		self.filePath = filePath
 		self.recordsPath = os.path.dirname(self.filePath)
 		self.isRecording = False
+		self.recordingComplete = False
 		self.audio = pyaudio.PyAudio()
 		self.stream = None
 		self.audioBuffer = bytearray()
@@ -296,6 +300,7 @@ class AudioRecord:
 			self.stream.stop_stream()
 			self.stream.close()
 			self.saveRecording()
+			self.recordingComplete = True
 			return True
 		return False
 
@@ -307,6 +312,26 @@ class AudioRecord:
 		self.audioBuffer.clear()
 		with open(self.filePath, "ab") as mp3File:
 			mp3File.write(mp3Data)
+
+	def play(self):
+		alias = "mp3player"
+		mci = ctypes.windll.winmm
+
+		def _send_command(command):
+			"""Send an MCI command."""
+			result = mci.mciSendStringW(command, None, 0, None)
+			if result != 0:
+				raise RuntimeError(f"MCI error: {result}")
+
+		log.info("zzz start playing")
+		command = f'open "{self.filePath}" type mpegvideo alias {alias}'
+		_send_command(command)
+		_send_command(f'play {alias}')
+		import time
+		time.sleep(5)
+		_send_command(f'stop {alias}')
+		_send_command(f'close {alias}')
+		log.info("zzz end playing")
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
